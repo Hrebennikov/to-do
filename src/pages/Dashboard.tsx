@@ -1,49 +1,63 @@
 import { useState, useEffect } from "react";
-import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc } from "firebase/firestore";
-import { db } from "../firebase/config";  
+import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, getDoc } from "firebase/firestore";
+import { db } from "../firebase/config";
 import { useAuth } from "../context/AuthContext";
+
+interface Task {
+  id: string;
+  text: string;
+  completed: boolean;
+}
+
+interface TaskList {
+  id: string;
+  name: string;
+  owner: string;
+  collaborators: string[];  
+  tasks: Task[];
+}
 
 const Dashboard = () => {
   const { user } = useAuth();
-  const [listName, setListName] = useState("");
-  const [taskLists, setTaskLists] = useState<any[]>([]);
-  const [newTaskText, setNewTaskText] = useState("");
+  const [listName, setListName] = useState<string>("");
+  const [taskLists, setTaskLists] = useState<TaskList[]>([]); 
+  const [newTaskText, setNewTaskText] = useState<string>("");
+  const [email, setEmail] = useState<string>("");
 
   const createList = async () => {
     if (!user || !listName) {
       alert("Please log in to create a list.");
       return;
     }
-    
+
     try {
       await addDoc(collection(db, "taskLists"), {
         name: listName,
-        owner: user.uid,  
-        tasks: [], // Початковий список задач порожній
+        owner: user.uid,
+        collaborators: [], 
+        tasks: [], 
       });
-      setListName(""); // Очищуємо поле після створення списку
-      fetchTaskLists(); // Оновлюємо список після створення
+      setListName(""); 
+      fetchTaskLists(); 
     } catch (error) {
       console.error("Error creating task list: ", error);
       alert("Error creating task list");
     }
   };
 
-  // Функція для отримання списків
   const fetchTaskLists = async () => {
     if (!user) {
       console.error("User not logged in.");
       return;
     }
-  
+
     try {
       const querySnapshot = await getDocs(collection(db, "taskLists"));
-      const lists: any[] = [];
+      const lists: TaskList[] = []; 
       querySnapshot.forEach((doc) => {
-        console.log("Task list owner:", doc.data().owner);
-        console.log("Current user UID:", user.uid);
-        if (doc.data().owner === user.uid) {
-          lists.push({ ...doc.data(), id: doc.id });
+        const data = doc.data();
+        if (data.owner === user.uid) {
+          lists.push({ ...data, id: doc.id });
         }
       });
       setTaskLists(lists);
@@ -52,32 +66,43 @@ const Dashboard = () => {
       alert(`Error fetching task lists: ${error.message}`);
     }
   };
-  
 
-
-  // Викликаємо fetchTaskLists при монтуванні компоненту
   useEffect(() => {
     fetchTaskLists();
   }, [user]);
 
-  // Функція для редагування назви списку
-  const updateListName = async (listId: string, newName: string) => {
-    if (!user) return;
-    const listRef = doc(db, "taskLists", listId);
-    await updateDoc(listRef, { name: newName });
-    fetchTaskLists(); // Оновлюємо список після зміни
+  const addCollaborator = async (listId: string, email: string) => {
+    if (!user) {
+      alert("Please log in.");
+      return;
+    }
+
+    try {
+      const listRef = doc(db, "taskLists", listId);
+      const listSnapshot = await getDoc(listRef);
+
+      if (listSnapshot.exists()) {
+        const listData = listSnapshot.data();
+        const collaborators = listData.collaborators || [];
+
+        if (!collaborators.includes(email)) {
+          collaborators.push(email);
+          await updateDoc(listRef, { collaborators });
+          alert("Collaborator added successfully!");
+        } else {
+          alert("This user is already a collaborator.");
+        }
+      } else {
+        alert("List not found.");
+      }
+    } catch (error) {
+      console.error("Error adding collaborator:", error);
+      alert("Error adding collaborator.");
+    }
   };
 
-  // Функція для видалення списку
-  const deleteList = async (listId: string) => {
-    const listRef = doc(db, "taskLists", listId);
-    await deleteDoc(listRef);
-    fetchTaskLists(); // Оновлюємо список після видалення
-  };
-
-  // Функція для створення нової задачі
   const createTask = async (listId: string) => {
-    if (!newTaskText) return; // Перевірка на порожній текст задачі
+    if (!newTaskText) return;
     const listRef = doc(db, "taskLists", listId);
     const newTask = {
       id: Date.now().toString(),
@@ -85,7 +110,7 @@ const Dashboard = () => {
       completed: false,
     };
 
-    const updatedTaskLists = taskLists.map((list) => {
+    const updatedTaskLists = taskLists.map((list: TaskList) => {
       if (list.id === listId) {
         list.tasks = list.tasks || [];
         list.tasks.push(newTask);
@@ -95,15 +120,27 @@ const Dashboard = () => {
 
     await updateDoc(listRef, { tasks: updatedTaskLists[0].tasks });
     setTaskLists(updatedTaskLists);
-    setNewTaskText(""); // Очищуємо інпут після створення задачі
+    setNewTaskText(""); 
   };
 
-  // Функція для зміни статусу задачі
+  const updateListName = async (listId: string, newName: string) => {
+    if (!user) return;
+    const listRef = doc(db, "taskLists", listId);
+    await updateDoc(listRef, { name: newName });
+    fetchTaskLists(); 
+  };
+
+  const deleteList = async (listId: string) => {
+    const listRef = doc(db, "taskLists", listId);
+    await deleteDoc(listRef);
+    fetchTaskLists(); 
+  };
+
   const toggleTaskCompleted = async (listId: string, taskId: string) => {
     const listRef = doc(db, "taskLists", listId);
-    const updatedTaskLists = taskLists.map((list) => {
+    const updatedTaskLists = taskLists.map((list: TaskList) => {
       if (list.id === listId) {
-        list.tasks = list.tasks.map((task: any) => {
+        list.tasks = list.tasks.map((task: Task) => {
           if (task.id === taskId) {
             task.completed = !task.completed;
           }
@@ -114,40 +151,20 @@ const Dashboard = () => {
     });
 
     await updateDoc(listRef, { tasks: updatedTaskLists[0].tasks });
-    setTaskLists(updatedTaskLists); // Оновлюємо стейт
+    setTaskLists(updatedTaskLists);
   };
 
-  // Функція для редагування тексту задачі
-  const updateTask = async (listId: string, taskId: string, newText: string) => {
-    const listRef = doc(db, "taskLists", listId);
-    const updatedTaskLists = taskLists.map((list) => {
-      if (list.id === listId) {
-        list.tasks = list.tasks.map((task: any) => {
-          if (task.id === taskId) {
-            task.text = newText;
-          }
-          return task;
-        });
-      }
-      return list;
-    });
-
-    await updateDoc(listRef, { tasks: updatedTaskLists[0].tasks });
-    setTaskLists(updatedTaskLists); // Оновлюємо стейт
-  };
-
-  // Функція для видалення задачі
   const deleteTask = async (listId: string, taskId: string) => {
     const listRef = doc(db, "taskLists", listId);
-    const updatedTaskLists = taskLists.map((list) => {
+    const updatedTaskLists = taskLists.map((list: TaskList) => {
       if (list.id === listId) {
-        list.tasks = list.tasks.filter((task: any) => task.id !== taskId);
+        list.tasks = list.tasks.filter((task: Task) => task.id !== taskId);
       }
       return list;
     });
 
     await updateDoc(listRef, { tasks: updatedTaskLists[0].tasks });
-    setTaskLists(updatedTaskLists); // Оновлюємо стейт
+    setTaskLists(updatedTaskLists);
   };
 
   return (
@@ -163,11 +180,10 @@ const Dashboard = () => {
         Створити список
       </button>
 
-      {/* Виведення списків і задач */}
       <div className="mt-4">
         {taskLists.length > 0 ? (
           <ul>
-            {taskLists.map((list) => (
+            {taskLists.map((list: TaskList) => (
               <li key={list.id} className="border-b py-2">
                 <div className="flex justify-between items-center">
                   <p>{list.name}</p>
@@ -178,9 +194,26 @@ const Dashboard = () => {
                     Видалити
                   </button>
                 </div>
+
+                <div className="mt-2">
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="Введіть email співучасника"
+                    className="border p-2 mb-4"
+                  />
+                  <button
+                    onClick={() => addCollaborator(list.id, email)}
+                    className="bg-blue-500 text-white p-2 ml-2"
+                  >
+                    Додати співучасника
+                  </button>
+                </div>
+
                 <ul>
                   {list.tasks && list.tasks.length > 0 ? (
-                    list.tasks.map((task: any) => (
+                    list.tasks.map((task: Task) => (
                       <li key={task.id} className="flex items-center justify-between">
                         <input
                           type="checkbox"
@@ -208,7 +241,6 @@ const Dashboard = () => {
                           >
                             Видалити
                           </button>
-                          {/* Кнопка для виконання задачі */}
                           <button
                             onClick={() => toggleTaskCompleted(list.id, task.id)}
                             className="bg-green-500 text-white p-1 ml-2"
@@ -234,4 +266,3 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
-
